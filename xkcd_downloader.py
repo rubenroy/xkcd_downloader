@@ -1,64 +1,42 @@
-"""
-downloads all XKCD strips and hover-captions within the numbers specified
-
-This code is free to copy, modify, distribute, eat sleep or swear at. Just credit me somewhere.
-
-Sriram Padmanabhan
-screamingwdm2 at gmail dot com
-"""
-
-
-import re,urllib,os,subprocess
-
-mainpage=urllib.urlopen("http://www.xkcd.org")
-mainpage_html=mainpage.read()
-
-latest_num=int(re.search(r'Permanent link to this comic: http://xkcd.com/(.*)/<br.*',mainpage_html).group(1))
-print 'Latest comic number is',latest_num
-rangeinput=raw_input('\nEnter comics to download (eg: "55,630,666-999,1024": ')
-
-comiclist=list()
-
-for (num_left,num_right,num_single) in re.findall(r'(\d+)-(\d+)|(\d+)',rangeinput):
-	if num_single is not '':
-		comiclist.append(int(num_single))
-	if num_left is not '' and num_right is not '':
-		for i in range(int(num_left),int(num_right)+1):
-			comiclist.append(i)
-
-url_error=list()
-wget_arg=''
-fnull = open(os.devnull, 'w')
-os.system('[ -d xkcd_downloaded ] || mkdir xkcd_downloaded')
-fnull.close()
-
-for comic in comiclist:
-   	try:
-		comic_url="http://xkcd.com/"+str(comic)
-		print 'Opening ',comic_url,'...'
-		page=urllib.urlopen(comic_url).read()
-		img_url=re.search(r'Image URL \(for hotlinking/embedding\): (.*png)',page).group(1)
-		img_name=re.search(r'/(\w*).png',img_url).group(1)
-		comic_transcript=re.search(r'http://imgs.xkcd.com/comics/.*\.png" title="(.*)" alt',page).group(1)
-		wget_arg+=img_url+' ' #add image url to wget list
-	
-	except AttributeError:	#most probably a regex that failed to match
-		url_error.append(comic)
-		continue
-		
-	#convert special characters in transcript
-	comic_transcript=comic_transcript.replace("&#39;","'")
-	comic_transcript=comic_transcript.replace("&amp;","&")
-	comic_transcript=comic_transcript.replace("&quot;",'"')
-	comic_transcript=comic_transcript.replace("&lt;","<")
-	comic_transcript=comic_transcript.replace("&gt;",">")
-
-	#save transcript
-	ftext=open("./xkcd_downloaded/"+img_name+".txt",'w')
-	ftext.write(comic_transcript)
-	ftext.flush()
-	
-#run wget for all the links
-os.system('cd xkcd_downloaded;wget -nv -nc '+wget_arg)
-
-print 'Could not fetch comics numbered: ', url_error #todo FIXME
+import requests,os
+from bs4 import BeautifulSoup
+def download(page_url,folder):
+    print 'Opening ',page_url,'...'
+    soup = BeautifulSoup(requests.get(page_url).text)
+    tag = soup.find(id="comic").img
+    image_url = tag["src"]
+    filename = image_url.split('/')[-1]    
+    f=open(os.getcwd()+"/"+folder+"/"+filename+".txt",'w')
+    f.write(tag["title"])
+    f.close()
+    r = requests.get(image_url, stream = True)
+    with open(os.getcwd()+"/"+folder+"/"+filename, 'wb') as f:
+        for chunk in r.iter_content(chunk_size=1024): 
+            if chunk:
+                f.write(chunk)
+                f.flush()
+def get_range(s,latest):
+    r = []
+    for i in s.split(","):
+        if "-" in i:
+            l = i.split("-")
+            a,b = int(l[0]),int(l[1])
+            if a > latest:
+                break
+            elif b > latest:
+                b = latest
+            r += range(a,b+1)
+        elif int(i) > latest:
+            r.append(int(i))
+    return r
+folder = "xkcd_downloaded"
+soup = BeautifulSoup(requests.get("http://xkcd.com/").text)
+tag = soup.find(attrs={"rel": "prev"})
+latest = int(tag["href"].split("/")[1])+1
+print 'Latest comic number is',latest
+range_input=raw_input('\nEnter comics to download (eg: "55,630,666-999,1024"): ')
+range_list=get_range(range_input,latest)
+if not os.path.exists(folder):
+    os.mkdir(folder)
+for i in range_list:
+    download("http://xkcd.com/"+str(i)+"/",folder)
