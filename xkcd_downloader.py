@@ -15,15 +15,15 @@ class Download(threading.Thread):
         t_path = img_path+".txt"
         img_size = int(requests.head(image_url).headers["content-length"])
         if os.path.exists(img_path)==False or img_size!=int(os.path.getsize(img_path)):
-            print_lock.acquire()
-            print "Downloading",i
-            print_lock.release()
             r = requests.get(image_url,stream = True)
             with open(img_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):
                     if chunk:
                         f.write(chunk)
                         f.flush()
+            print_lock.acquire()
+            print "Downloaded",i
+            print_lock.release()
         t_size = len(page_dict["transcript"])
         if os.path.exists(t_path)==False or t_size!=int(os.path.getsize(t_path)):
             f = open(t_path,'w')
