@@ -2,34 +2,42 @@ import requests
 import os
 import json
 import threading
+import Queue
 
 max_threads = 70
 folder = "xkcd_downloaded"
 download_path = os.getenv("HOME")+"/"+folder
 
-active_threads = 0
-lock = threading.Lock()
 print_lock = threading.Lock()
-queue = Queue.Queue()
+q = Queue.Queue()
 
 
 class Download(threading.Thread):
     page_url = ""
 
     def download(self):
+        self.page_url = q.get()
         page_dict = json.loads(requests.get(self.page_url).text)
         image_url = page_dict["img"]
         filename = image_url.split("/")[-1]
         i = page_dict["num"]
         img_path = download_path + "/" + str(i) + ". " + filename
         t_path = img_path + ".txt"
-        remote_size = int(requests.head(image_url).headers["content-length"])
+        url = image_url
+        response = requests.head(image_url)
+        if response.status_code == 301:
+            url = response.headers["location"]
+            response = requests.get(url, allow_redirects=False)
+            url = response.headers["location"]
+            response = requests.head(url)
+            image_url = url
+        remote_size = int(response.headers["content-length"])
         try:
             local_size = int(os.path.getsize(img_path))
         except OSError:
             local_size = 0
         if remote_size != local_size:
-            r = requests.get(image_url, stream=True)
+            r = requests.get(response.url, stream=True)
             with open(img_path, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=1024):
                     if chunk:
@@ -48,16 +56,13 @@ class Download(threading.Thread):
             f.write(page_dict["transcript"].encode("UTF-8"))
             f.close()
 
-    def __init__(self, page_url):
+    def __init__(self):
         super(Download, self).__init__()
-        self.page_url = page_url
 
     def run(self):
-        self.download()
-        lock.acquire()
-        global active_threads
-        active_threads -= 1
-        lock.release()
+        while q.qsize() > 0:
+            self.download()
+            q.task_done()
 
 
 def get_range(s, latest):
@@ -81,23 +86,25 @@ def get_range(s, latest):
 
 
 def main():
-    global active_threads
+    global max_threads
     url = "http://xkcd.org/info.0.json"
     latest = json.loads(requests.get(url).text)["num"]
     print 'Latest comic number is', latest
     range_input = raw_input('Enter comics to download'
                             '(eg: "55,630,666-999,1024"): ')
-    range_list = get_range(range_input, latest)
-    if not os.path.exists(folder):
-        os.mkdir(folder)
+    if range_input.isspace() or not range_input:
+        range_list = range(1, 404) + range(405, latest+1)
+    else:
+        range_list = get_range(range_input, latest)
+    if not os.path.exists(download_path):
+        os.mkdir(download_path)
     for i in range_list:
-        while True:
-            lock.acquire()
-            if(active_threads < max_threads):
-                active_threads += 1
-                lock.release()
-                break
-            lock.release()
-        Download("http://xkcd.com/"+str(i)+"/info.0.json").start()
+        q.put("http://xkcd.com/"+str(i)+"/info.0.json")
+    max_threads = min(len(range_list), max_threads)
+    for i in range(max_threads):
+        t = Download()
+        t.daemon = True
+        t.start()
+    q.join()
 if __name__ == '__main__':
     main()
